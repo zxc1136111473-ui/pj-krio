@@ -356,27 +356,16 @@ async function requestGenerate(context, access, prompt, model, origin, onDelta) 
     },
     profileArn: arn,
   };
-  // 思考模式三档（面板可选）：
-  //   fast     = output_config.low + reasoning.low  （实测首 token ~3.2s）
-  //   balanced = medium
-  //   max      = xhigh（深度思考，质量最高）
-  const mode = get("thinkMode", "fast");
-  if (mode === "max") {
-    body.additionalModelRequestFields = {
-      output_config: { effort: "xhigh" },
-      reasoning: { effort: "high" },
-    };
-  } else if (mode === "balanced") {
-    body.additionalModelRequestFields = {
-      output_config: { effort: "medium" },
-      reasoning: { effort: "medium" },
-    };
-  } else {
-    body.additionalModelRequestFields = {
-      output_config: { effort: "low" },
-      reasoning: { effort: "low" },
-    };
-  }
+  // 快速 / 思考 是两个独立开关，可同时开：
+  //   快速 = output_config.effort=low（首 token 更快）
+  //   思考 = reasoning.effort=high（更深推理）
+  //   同时开 = 低延迟生成 + 深度思考
+  const speedOn = get("speedMode", true) !== false;
+  const thinkOn = get("thinkDeep", false) === true;
+  body.additionalModelRequestFields = {
+    output_config: { effort: speedOn ? "low" : thinkOn ? "xhigh" : "medium" },
+    reasoning: { effort: thinkOn ? "high" : speedOn ? "low" : "medium" },
+  };
 
   const t0 = Date.now();
   let res;
@@ -1368,11 +1357,10 @@ function panelHtml(webview, extensionUri) {
   <select id="sessionSel" title="会话"></select>
   <button id="btnNewSession" class="small">＋新会话</button>
   <select id="model" title="模型"></select>
-  <select id="thinkMode" title="思考模式">
-    <option value="fast">🚀 快速</option>
-    <option value="balanced">⚖️ 平衡</option>
-    <option value="max">🧠 深度max</option>
-  </select>
+  <div id="thinkSeg" class="seg" title="可同时开：快速=低延迟生成；思考=深度推理">
+    <button type="button" id="btnSpeed" data-flag="speed">🚀 快速</button>
+    <button type="button" id="btnThink" data-flag="think">🧠 思考</button>
+  </div>
   <select id="origin" title="origin"></select>
   <span id="usage" class="chip" title="额度快照"></span>
   <button id="btnUsage" class="small">额度</button>
@@ -1405,7 +1393,8 @@ function handleViewMessage(context, msg) {
         origins: OPEN_ORIGINS,
         defaultModel: currentModel,
         defaultOrigin: currentOrigin,
-        thinkMode: get("thinkMode", "fast"),
+        speedOn: get("speedMode", true) !== false,
+        thinkOn: get("thinkDeep", false) === true,
       });
       sessions = getSessions(context);
       currentSessionId = context.globalState.get("qconsole.currentSessionId");
@@ -1532,9 +1521,8 @@ function handleViewMessage(context, msg) {
       }
       break;
     case "setThinkMode":
-      if (msg.mode && ["fast", "balanced", "max"].includes(msg.mode)) {
-        cfg().update("thinkMode", msg.mode, vscode.ConfigurationTarget.Global);
-      }
+      if (typeof msg.speed === "boolean") cfg().update("speedMode", msg.speed, vscode.ConfigurationTarget.Global);
+      if (typeof msg.think === "boolean") cfg().update("thinkDeep", msg.think, vscode.ConfigurationTarget.Global);
       break;
     case "setOrigin":
       if (msg.origin) {
