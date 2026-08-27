@@ -127,6 +127,9 @@
   modelEl.addEventListener("change", () =>
     vscode.postMessage({ type: "setModel", model: modelEl.value })
   );
+  $("thinkMode").addEventListener("change", () =>
+    vscode.postMessage({ type: "setThinkMode", mode: $("thinkMode").value })
+  );
   originEl.addEventListener("change", () =>
     vscode.postMessage({ type: "setOrigin", origin: originEl.value })
   );
@@ -213,6 +216,7 @@
           originEl.appendChild(o);
         }
         originEl.value = m.defaultOrigin || m.origins[0];
+        if (m.thinkMode) $("thinkMode").value = m.thinkMode;
         break;
       case "setModel":
         if (m.model && modelEl.querySelector(`option[value="${m.model}"]`)) {

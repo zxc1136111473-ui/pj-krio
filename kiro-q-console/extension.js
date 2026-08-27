@@ -318,8 +318,22 @@ async function requestGenerate(context, access, prompt, model, origin, onDelta) 
     },
     profileArn: arn,
   };
-  // 加速突破：effort=low + reasoning=low 实测首 token 9.3s→3.2s、总时长 11s→7s，工具调用质量不变
-  if (get("speedMode", true)) {
+  // 思考模式三档（面板可选）：
+  //   fast     = output_config.low + reasoning.low  （实测首 token ~3.2s）
+  //   balanced = medium
+  //   max      = xhigh（深度思考，质量最高）
+  const mode = get("thinkMode", "fast");
+  if (mode === "max") {
+    body.additionalModelRequestFields = {
+      output_config: { effort: "xhigh" },
+      reasoning: { effort: "high" },
+    };
+  } else if (mode === "balanced") {
+    body.additionalModelRequestFields = {
+      output_config: { effort: "medium" },
+      reasoning: { effort: "medium" },
+    };
+  } else {
     body.additionalModelRequestFields = {
       output_config: { effort: "low" },
       reasoning: { effort: "low" },
@@ -1087,6 +1101,11 @@ function panelHtml(webview, extensionUri) {
   <select id="sessionSel" title="会话"></select>
   <button id="btnNewSession" class="small">＋新会话</button>
   <select id="model" title="模型"></select>
+  <select id="thinkMode" title="思考模式">
+    <option value="fast">🚀 快速</option>
+    <option value="balanced">⚖️ 平衡</option>
+    <option value="max">🧠 深度max</option>
+  </select>
   <select id="origin" title="origin"></select>
   <span id="usage" class="chip" title="额度快照"></span>
   <button id="btnUsage" class="small">额度</button>
@@ -1119,6 +1138,7 @@ function handleViewMessage(context, msg) {
         origins: OPEN_ORIGINS,
         defaultModel: currentModel,
         defaultOrigin: currentOrigin,
+        thinkMode: get("thinkMode", "fast"),
       });
       sessions = getSessions(context);
       currentSessionId = context.globalState.get("qconsole.currentSessionId");
@@ -1242,6 +1262,11 @@ function handleViewMessage(context, msg) {
       if (msg.model) {
         currentModel = msg.model;
         refreshStatus();
+      }
+      break;
+    case "setThinkMode":
+      if (msg.mode && ["fast", "balanced", "max"].includes(msg.mode)) {
+        cfg().update("thinkMode", msg.mode, vscode.ConfigurationTarget.Global);
       }
       break;
     case "setOrigin":

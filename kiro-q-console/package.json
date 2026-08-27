@@ -2,7 +2,7 @@
   "name": "q-console",
   "displayName": "Q Console",
   "description": "直打 Amazon Q Runtime（origin=CONSOLE）直接调用高级模型 claude-opus-5 / gpt-5.6-sol 等，流式输出 + 额度显示。",
-  "version": "1.11.3",
+  "version": "1.11.4",
   "publisher": "local.kiro",
   "private": true,
   "license": "UNLICENSED",
@@ -190,6 +190,16 @@
           "type": "boolean",
           "default": true,
           "description": "加速模式：请求带 effort=low（实测首 token 9.3s→3.0s，总时长减半，工具调用质量不变）。关闭用默认深度。"
+        },
+        "qconsole.thinkMode": {
+          "type": "string",
+          "default": "fast",
+          "enum": [
+            "fast",
+            "balanced",
+            "max"
+          ],
+          "description": "思考模式三档：fast=快速（effort low+low，首token ~3s）；balanced=平衡（medium）；max=深度思考（xhigh，质量最高最慢）。"
         }
       }
     }
