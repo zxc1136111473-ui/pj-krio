@@ -1015,18 +1015,43 @@ function parseToolCalls(text) {
       calls.push({ name, input: normalizeToolInput(name, input) });
     }
   };
+  // JSON 容错：模型常输出尾部多 } 或少引号。多策略修复重试。
+  const tryParse = (raw) => {
+    let s = String(raw).trim();
+    if (!s.startsWith("{")) return null;
+    const attempts = [];
+    attempts.push(s);
+    // 1) 尾部多余 } 或 ] 逐个裁剪
+    for (let i = 0; i < 3; i++) {
+      if (/[}\]]\s*$/.test(s)) {
+        s = s.replace(/[}\]]\s*$/, "");
+        attempts.push(s);
+      }
+    }
+    // 2) 补尾部括号
+    const depth = (s.match(/{/g) || []).length - (s.match(/}/g) || []).length;
+    if (depth > 0) attempts.push(s + "}".repeat(depth));
+    const depthB = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
+    if (depthB > 0) attempts.push(s + "]".repeat(depthB));
+    // 3) 单引号 JSON（模型偶发）
+    attempts.push(s.replace(/'/g, '"'));
+    for (const a of attempts) {
+      try {
+        return JSON.parse(a);
+      } catch (_) {}
+    }
+    return null;
+  };
   let m;
   const reTool = /<tool>\s*([\s\S]*?)\s*<\/tool>/g;
   while ((m = reTool.exec(text)) !== null) {
-    try {
-      push(JSON.parse(m[1]));
-    } catch (_) {}
+    const obj = tryParse(m[1]);
+    if (obj) push(obj);
   }
   const reFence = /```json\s*([\s\S]*?)```/g;
   while ((m = reFence.exec(text)) !== null) {
-    try {
-      push(JSON.parse(m[1]));
-    } catch (_) {}
+    const obj = tryParse(m[1]);
+    if (obj) push(obj);
   }
   return calls;
 }
@@ -1117,7 +1142,7 @@ async function runAgentInner(context, task, model, origin) {
       task;
   }
 
-  // 先注入真实顶层目录，避免模型按字母序截断后去猜 src/main.py
+  // 先注入真实顶层目录 + 平台信息（防 GNU/BSD 命令混用：cat -A 在 macOS 不存在）
   let snap = "";
   try {
     const root = wsRoot();
@@ -1134,6 +1159,17 @@ async function runAgentInner(context, task, model, origin) {
         "\nDo NOT guess src/main.py. Use listed dirs (e.g. scripts/, kiro-q-console/, web/).\n</workspace_root>\n";
     }
   } catch (_) {}
+  // 平台信息：macOS 用 BSD 语法（cat 无 -A，用 cat -vet；sed -i 要加 ''；无 GNU grep -P）
+  let platform = "linux";
+  try {
+    platform = process.platform || "linux"; // darwin/win32/linux
+  } catch (_) {}
+  if (platform === "darwin") {
+    snap +=
+      "<platform>\nmacOS (BSD): cat has NO -A flag (use cat -vet or sed -n 'l'); sed -i needs '' (e.g. sed -i '' 's/x/y/'); grep has no -P (use -E). Python is python3.\n</platform>\n";
+  } else if (platform === "win32") {
+    snap += "<platform>\nWindows: use PowerShell-compatible commands or python3; no bash builtins.\n</platform>\n";
+  }
 
   let base =
     snap +
