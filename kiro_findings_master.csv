@@ -1,0 +1,59 @@
+ID,类别,层,优先级,状态,证据,复现指引
+B1,比例计费+全量发放+月界重置套利,定价规则,P0,推导(仿真),billing.md规则+扫描S1,手册L2-§2
+B2,余额扣减竞态超卖,计量,P0,推导(仿真),billing_sim/sweep S3,手册L2-§3
+B3,兑换码可枚举/重放,结算,P1,推导,设计+robots /redeem,手册L2-§4
+B4,支付回调无签名伪造,支付,P1,推导,Stripe portal流程,手册L2-§5
+B5,首购标记按账号重置,权益,P1,推导,多IdP+删号文档,手册L2-§6
+B6,GraphQL鉴权缺失/IDOR,结算,P1,推导,AppSync面,手册L2-§7
+B7,试用状态机缺陷,权益,P0,实锤,issue#10643#10784#10420,手册L2-§B7
+B8,支付-权益断链,权益,P0,实锤,issue#9675#10902#8196#10560,手册L2-§B8
+B9,税务TRN/国家自报,规则,P1,推导,managing-taxes.md税率表,round2
+B10,地域/币种套利,规则,P2,推导,issue#2308#10988,round2
+B11,企业席位/双订阅定价,规则,P1,推导,enterprise/billing.md,round2
+B12,计量操纵(声明/截断/异常),计量,P0,实锤,issue#11011#10999#10923,round2
+B13,删号30天恢复窗口,权益,P2,推导,deleting-account.md,round2
+B14,支付重试/3DS边界,支付,P2,实锤,issue#10560#10784,round2
+B15,客服通道补偿滥用,流程,P2,推导,issue#10648#11012,round2
+B16,门户/通知/令牌杂项,结算,P3,推导,subscription-portal.md,round2
+B17,计费双引擎迁移期,结算,P0,实锤(flag),bundle enableNewBilling,round3
+B18,模型费率声明篡改48x,计量,P0,推导,models.md费率表,round3
+B19,免费档模型门禁跨端,生态,P1,推导,models.md+六入口,round3
+B20,OAuth回调面(state/redirect/code),认证,P1,推导,bundle回调路由,round3
+B21,风控误伤与封禁维度,风控,P2,实锤,issue#10924#10864群,round3
+B22,桌面端无签名可执行,供应链,P1,实锤,issue#5832,round3
+B23,学生计划验证绕过,流程,P2,推导,enableStudentPlan flag,round3
+B24,席位生命周期(停用仍计费),规则,P1,实锤(规则),subscription-management.md,round4
+B25,Cognito身份池凭证面,认证,P0,推导(高),UnknownOperationException指纹,round4
+B26,邀请/席位链路,生态,P2,推导,/invite路由,round4
+B27,设备绑定面,认证,P3,推导,/account/device,round4
+B28,生态内容计量滥用(恶意power/spec),生态,P1,推导,issue#10999+生态,round4
+B29,治理客户端级执行(web tools),治理,P1,实锤,web-tools.md原文,round5
+B30,企业API密钥面,认证,P1,推导,issue#8414+governance,round5
+B31,Overage状态机,结算,P2,实锤,issue#10914#7599,round5
+B32,跨账户订阅归属(AWS Org),结算,P2,实锤,issue#10313#7089#7068,round5
+B33,设备流登录(device grant),认证,P2,实锤,issue#10975,round5
+B34,计划积分三渠道(学生/初创/客服),流程,P2,实锤,issue#9267,round5
+B35,API密钥面(门禁/作用域/撤销),认证,P1,推导,api-keys.md,round6
+B36,Web面付费门禁,权益,P1,推导,authentication.md,round6
+B37,测试环境配置漂移,环境,P3,实锤,beta403/gamma302实测,round6
+B38,Powers供应链(无签名),供应链,P2,推导,powers仓库+install,round6
+B39,跨产品权益(Amazon Q互通),权益,P1,实锤,issue#10851,round6
+B40,计量与遥测解耦验证,计量,P2,待验证,settings.md,round6
+B41,隐私/服务改进合规,合规,P3,记录,data-protection.md,round6
+B42,CI headless提示注入,生态,P1,实锤(模式),官方CI示例+trust-all-tools,round7
+B43,治理执行层级(官方确认),治理,P1,实锤,web-tools.md,round7
+B44,会话ID语义(--resume-id),认证,P2,实锤,issue#11069#9066,round7
+B45,管理IAM策略过宽(sso:*),治理,P2,推导,iam.md策略JSON,round7
+B46,供应链正面核实(SECURITY.md等),供应链,-,记录,KiroCrew仓库,round7
+B47,Workspace MCP自动执行,供应链,P1,实锤(模式),mcp.md配置路径,round8
+B48,Web面企业治理空窗,治理,P1,实锤,identity-center.md,round8
+B49,iOS计费面(未上架),生态,P3,观察,AppStore检索,round8
+B50,商城支付面,生态,P3,观察,shop.kiro.dev,round8
+B51,远程MCP注入/elicitation,生态,P2,推导,mcp.md,round8
+B52,客服通道PII面,流程,P2,实锤,issue#10643邮箱,round9
+B53,治理per-account覆盖鉴权,治理,P2,推导,governance.md,round9
+B54,移动/公告核实,记录,P3,记录,公告API为空,round9
+B55,权限执行跨面不一致,生态,P1,实锤,issue#4751#10403,round10
+B56,第三方令牌托管(GitLab PAT),认证,P1,推导,web/setup.md,round10
+B57,headless进程/会话泄露,生态,P3,实锤,issue#10877,round10
+B58,沙箱工具环境面(execute_bash),生态,P2,实锤,issue#10670,round10
