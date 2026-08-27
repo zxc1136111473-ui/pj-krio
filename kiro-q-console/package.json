@@ -1,0 +1,197 @@
+{
+  "name": "q-console",
+  "displayName": "Q Console",
+  "description": "直打 Amazon Q Runtime（origin=CONSOLE）直接调用高级模型 claude-opus-5 / gpt-5.6-sol 等，流式输出 + 额度显示。",
+  "version": "1.11.1",
+  "publisher": "local.kiro",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui",
+    "workspace",
+    "web"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "main": "./extension.js",
+  "browser": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "qconsole.open",
+        "title": "打开 Q 面板（底部）",
+        "category": "Q Console",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "qconsole.statusClick",
+        "title": "状态栏入口（单击打开控制面板）",
+        "category": "Q Console"
+      },
+      {
+        "command": "qconsole.pickModel",
+        "title": "选择高级模型（原生 QuickPick）",
+        "category": "Q Console",
+        "icon": "$(chevron-down)"
+      },
+      {
+        "command": "qconsole.pickOrigin",
+        "title": "选择 origin",
+        "category": "Q Console",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "qconsole.askSelection",
+        "title": "用选中代码问 Q",
+        "category": "Q Console",
+        "icon": "$(question)"
+      },
+      {
+        "command": "qconsole.agentTask",
+        "title": "Agent 任务（调用工具本地执行）",
+        "category": "Q Console",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "qconsole.usage",
+        "title": "查看额度",
+        "category": "Q Console",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "qconsole.setToken",
+        "title": "设置 RefreshToken",
+        "category": "Q Console",
+        "icon": "$(key)"
+      },
+      {
+        "command": "qconsole.clearToken",
+        "title": "清除令牌",
+        "category": "Q Console"
+      }
+    ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "qconsole-panel",
+          "title": "Q Console",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "qconsole-panel": [
+        {
+          "type": "webview",
+          "id": "qconsole.view",
+          "name": "聊天",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "qconsole.open",
+        "key": "ctrl+alt+q",
+        "mac": "cmd+alt+q"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "qconsole.askSelection",
+          "when": "editorHasSelection",
+          "group": "navigation@98"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Q Console",
+      "properties": {
+        "qconsole.refreshToken": {
+          "type": "string",
+          "default": "",
+          "description": "RefreshToken（aor 开头）或 AccessToken（aoa 开头）。推荐用命令「Q Console: 设置 RefreshToken」存入密钥库，更安全；此处只作兜底。"
+        },
+        "qconsole.profileArn": {
+          "type": "string",
+          "default": "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
+          "description": "profileArn，来自 refreshToken 响应或桌面 kiro-auth-token.json。"
+        },
+        "qconsole.qEndpoint": {
+          "type": "string",
+          "default": "https://q.us-east-1.amazonaws.com",
+          "description": "Amazon Q Runtime 端点。"
+        },
+        "qconsole.authEndpoint": {
+          "type": "string",
+          "default": "https://prod.us-east-1.auth.desktop.kiro.dev",
+          "description": "Kiro desktop 认证端点（refreshToken 换 accessToken）。"
+        },
+        "qconsole.defaultModel": {
+          "type": "string",
+          "default": "claude-opus-5",
+          "description": "默认模型。可选项：claude-opus-5 / gpt-5.6-sol / qwen3-coder-next / claude-sonnet-4.5 / claude-haiku-4.5 / glm-4.6 / auto"
+        },
+        "qconsole.defaultOrigin": {
+          "type": "string",
+          "default": "CONSOLE",
+          "description": "默认 origin。开放：CONSOLE / CHATBOT / MOBILE / GITLAB / INLINE_CHAT；会拒高级模型：IDE / CLI / KIRO_CLI / AI_EDITOR / MD_IDE。"
+        },
+        "qconsole.timeoutSeconds": {
+          "type": "number",
+          "default": 300,
+          "description": "单次请求超时（秒）。"
+        },
+        "qconsole.keepAlive": {
+          "type": "boolean",
+          "default": true,
+          "description": "后台保活：定时自动刷新 accessToken 并预热额度查询，Kiro 挂着不动令牌也不会过期。"
+        },
+        "qconsole.keepAliveMinutes": {
+          "type": "number",
+          "default": 50,
+          "description": "保活间隔（分钟）。aoa 有效期 1 小时，默认 50 分钟换一次，留 10 分钟余量。"
+        },
+        "qconsole.agentMaxRounds": {
+          "type": "number",
+          "default": 0,
+          "description": "Agent 轮数硬上限。0 = 不限（默认，像原生 IDE agent 一样干到完成）；连续 3 轮零进展会自动暂停。"
+        },
+        "qconsole.agentPersonaRetry": {
+          "type": "boolean",
+          "default": true,
+          "description": "Agent 被 Amazon Q 人设拒绝（无工具调用、无 done）时，自动切换备用身份重试（共 3 套人设）。"
+        },
+        "qconsole.toolOutputChars": {
+          "type": "number",
+          "default": 30000,
+          "description": "run_command / search_content 结果回喂给模型的最大字符数。"
+        },
+        "qconsole.maxSelectionChars": {
+          "type": "number",
+          "default": 90000,
+          "description": "「用选中代码问 Q」的最大粘贴字符数；设 0 或负数表示不截断。"
+        }
+      }
+    }
+  },
+  "__metadata": {
+    "installedTimestamp": 1787856199015,
+    "targetPlatform": "undefined",
+    "size": 94780
+  }
+}

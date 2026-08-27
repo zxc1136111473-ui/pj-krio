@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+  <Metadata>
+    <Identity Language="en-US" Id="local.kiro.q-console" Version="1.11.0" Publisher="local.kiro" />
+    <DisplayName>Q Console</DisplayName>
+    <Description xml:space="preserve">直打 Amazon Q Runtime（origin=CONSOLE）直接调用高级模型 claude-opus-5 / gpt-5.6-sol 等，流式输出 + 额度显示。</Description>
+    <Tags>kiro,q-console,amazon-q</Tags>
+    <Categories>Other</Categories>
+    <GalleryFlags>Public</GalleryFlags>
+  </Metadata>
+  <Installation>
+    <InstallationTarget Id="Microsoft.VisualStudio.Code" />
+  </Installation>
+  <Dependencies />
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" />
+    <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" />
+    <Asset Type="Microsoft.VisualStudio.Services.Content.Changelog" Path="extension/CHANGELOG.md" />
+  </Assets>
+</PackageManifest>
