@@ -32,6 +32,7 @@ const OPEN_ORIGINS = ["CONSOLE", "CHATBOT", "MOBILE", "GITLAB", "INLINE_CHAT"];
 const CLOSED_ORIGINS = ["IDE", "CLI", "KIRO_CLI", "AI_EDITOR", "MD_IDE"];
 const MODELS = [
   "claude-opus-5",
+  "claude-fable-5",
   "gpt-5.6-sol",
   "qwen3-coder-next",
   "claude-sonnet-4.5",
