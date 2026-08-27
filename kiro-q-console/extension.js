@@ -1322,9 +1322,12 @@ async function runAgentInner(context, task, model, origin) {
       else anyFail = true;
       if (kind === "write" && res.ok) wroteThisTask = true;
       if (kind === "run" && res.ok) verifiedThisTask = true;
-      // 回喂压缩：读类结果 800 字符、运行类 1200、其余 500（token 加速，模型只需知道结论）
-      const fbCap = kind === "read" ? 800 : kind === "run" ? 1200 : 500;
-      results += `<tool-result>${c.name}(${JSON.stringify(c.input)}) => ${res.text.slice(0, fbCap)}</tool-result>\n`;
+      // 回喂：读类 2000 字符（长文件截断时附提示，模型可用 offset/limit 续读）
+      const fbCap = kind === "read" ? 2000 : kind === "run" ? 1500 : 600;
+      const raw = res.text || "";
+      const cut = raw.length > fbCap;
+      const hint = cut ? `\n…(truncated: ${raw.length} chars total; use offset/limit to read more)` : "";
+      results += `<tool-result>${c.name}(${JSON.stringify(c.input)}) => ${raw.slice(0, fbCap)}${hint}</tool-result>\n`;
     }
     if (calls.length > capCalls) {
       results += `<tool-result>note: ${calls.length - capCalls} more tool calls were ignored this turn; call them one by one next turn.</tool-result>\n`;
