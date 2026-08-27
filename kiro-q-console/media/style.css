@@ -121,3 +121,14 @@ pre.toolOut {
   background: #1b1b1b; border: 1px solid var(--border); border-radius: 4px;
   font: 11px/1.4 Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all;
 }
+details.thinkMsg { margin: 0 0 8px 0; }
+.thinkMsg summary {
+  cursor: pointer; color: var(--accent); font-size: 12px;
+  list-style: none; user-select: none; opacity: .85;
+}
+.thinkMsg summary:hover { opacity: 1; }
+pre.thinkOut {
+  margin: 4px 0 0; padding: 6px 8px; max-height: 200px; overflow: auto;
+  background: #1b1b1b; border: 1px dashed var(--border); border-radius: 4px;
+  font: 11px/1.4 Menlo, Consolas, monospace; white-space: pre-wrap; color: var(--dim);
+}

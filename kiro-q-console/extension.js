@@ -91,6 +91,7 @@ Rules:
 - if a file path fails, use find_files or list_dir to discover the real path instead of guessing
 - if a shell command is not found (e.g. python), retry with python3 / the correct binary in the next turn
 - BE TERSY: no prose, no explanations between tool blocks. Output <tool> blocks directly.
+- Before each batch of tool calls, output ONE <think>your 1-2 line plan</think> block (only for the first turn, and when switching strategy). No other text.
 - finish by outputting <done>one-line summary</done> only after tools ran AND (if you wrote files) verification succeeded`;
 
 function agentPersona(i) {
@@ -1062,6 +1063,17 @@ function parseDone(text) {
   return m ? m[1].trim() : "";
 }
 
+function parseThink(text) {
+  const thinks = [];
+  const re = /<think>([\s\S]*?)<\/think>/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const t = m[1].trim();
+    if (t) thinks.push(t);
+  }
+  return thinks;
+}
+
 async function runAgent(context, task, model, origin) {
   if (busy) {
     post({ type: "error", msg: "上一请求还在进行中，稍后再发" });
@@ -1223,11 +1235,14 @@ async function runAgentInner(context, task, model, origin) {
         post({ type: "error", msg: r.error });
         return;
       }
-      // 面板只显示「思考」散文，协议标记（<tool>/<done>）剥掉，和正常 IDE 一样干净
+      // 面板显示：<think> 块作为「思考」，其余协议标记剥掉
+      const thinks = parseThink(r.text);
+      for (const t of thinks) post({ type: "agent-think", text: t.slice(0, 800) });
       const clean = think
         .replace(/<tool>[\s\S]*?<\/tool>/g, "")
-        .replace(/<\/?tool>|<\/?done>/g, "")
+        .replace(/<\/?tool>|<\/?done>|<\/?think>/g, "")
         .replace(/<tool-result>[\s\S]*?<\/tool-result>/g, "")
+        .replace(/<think>[\s\S]*?<\/think>/g, "")
         .trim();
       if (clean) post({ type: "agent-think", text: clean.slice(0, 800) });
       done = parseDone(r.text);

@@ -264,9 +264,23 @@
         break;
       case "agent-round":
         break; // 不再显示轮数
-      case "agent-think":
-        addMsg("assistant", "Q", m.text);
+      case "agent-think": {
+        // 思考折叠块：默认收起（像 IDE 的 thinking 一样）
+        const d = document.createElement("div");
+        d.className = "msg system thinkMsg";
+        const det = document.createElement("details");
+        const sum = document.createElement("summary");
+        sum.textContent = "🧠 思考";
+        const pre = document.createElement("pre");
+        pre.className = "thinkOut";
+        pre.textContent = m.text;
+        det.appendChild(sum);
+        det.appendChild(pre);
+        d.appendChild(det);
+        log.appendChild(d);
+        log.scrollTop = log.scrollHeight;
         break;
+      }
       case "tool": {
         const icons = { read: "📖", write: "✏️", run: "▶", agent: "🤖", fetch: "🌐" };
         const labels = { read: "读", write: "写", run: "运行", agent: "子代理", fetch: "联网" };
