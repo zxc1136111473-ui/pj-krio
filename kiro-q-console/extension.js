@@ -86,9 +86,11 @@ Rules:
 - for dependent calls (e.g. read a file right after writing it) wait for the next turn
 - use subagent to parallelize research of separate files/areas
 - WHEN FIXING CODE: if you already know the fix from the task description, output read_file AND replace_in_file/write_file in the SAME first turn. Do not spend turns only reading.
+- AFTER any write/replace: you MUST verify with run_command (or start_process + get_process_output). Do NOT output <done> until verification actually ran.
+- if verification fails, keep iterating: read the error, fix again, re-run. A one-line config tweak is not enough if the original error remains.
 - if a file path fails, use find_files or list_dir to discover the real path instead of guessing
 - if a shell command is not found (e.g. python), retry with python3 / the correct binary in the next turn
-- finish by outputting <done>one-line summary</done> when the task is complete`;
+- finish by outputting <done>one-line summary</done> only after tools ran AND (if you wrote files) verification succeeded`;
 
 function agentPersona(i) {
   const n = Math.max(0, Math.min(i, AGENT_IDENTITIES.length - 1));
@@ -140,12 +142,28 @@ function genNonce() {
     .join("");
 }
 
+// 隐形模式：UA 池随机化，弱化「脚本直调」特征
+const UA_POOL = [
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+];
+let uaIdx = 0;
+function pickUA() {
+  if (get("stealthMode", false)) {
+    uaIdx = (uaIdx + 1) % UA_POOL.length;
+    return UA_POOL[uaIdx];
+  }
+  return "KiroIDE";
+}
+
 async function httpJson(url, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": "KiroIDE", Accept: "application/json", ...(options.headers || {}) },
+      headers: { "User-Agent": pickUA(), Accept: "application/json", ...(options.headers || {}) },
       method: options.method || "GET",
       body: options.body,
       signal: controller.signal,
@@ -377,8 +395,19 @@ async function requestGenerate(context, access, prompt, model, origin, onDelta) 
       headers: {
         Authorization: "Bearer " + access,
         "Content-Type": "application/json",
-        "User-Agent": "KiroIDE",
+        "User-Agent": pickUA(),
         Accept: "application/json",
+        // 隐形模式：伪装成浏览器发起的请求（真实控制台会带 Origin/Referer）
+        ...(get("stealthMode", false)
+          ? {
+              Origin: "https://console.aws.amazon.com",
+              Referer: "https://console.aws.amazon.com/q/",
+              "Accept-Language": "en-US,en;q=0.9",
+              "Sec-Fetch-Dest": "empty",
+              "Sec-Fetch-Mode": "cors",
+              "Sec-Fetch-Site": "same-origin",
+            }
+          : {}),
       },
       body: JSON.stringify(body),
       signal: currentAbort.signal,
@@ -916,15 +945,50 @@ async function execTool(name, input, ctx) {
 
 /* ------------------------------ Agent 循环 ------------------------------ */
 
+function pickAlias(obj, keys) {
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== "") return obj[k];
+  }
+  return undefined;
+}
+
+function compactInput(input) {
+  const o = {};
+  if (!input || typeof input !== "object") return o;
+  for (const [k, v] of Object.entries(input)) {
+    if (v === "" || v === undefined || v === null) continue;
+    o[k] = v;
+  }
+  return o;
+}
+
 function normalizeToolInput(name, input) {
   const i = input && typeof input === "object" ? { ...input } : {};
-  if (!i.path) i.path = i.file || i.filename || i.filepath || "";
-  if (!i.content && i.content !== "") i.content = i.contents || i.body || i.text || "";
-  if (!i.command) i.command = i.cmd || i.shell || i.code || "";
-  if (!i.pattern) i.pattern = i.query || i.q || i.keyword || i.regex || "";
-  if (!i.old) i.old = i.old_string || i.from || "";
-  if (!i.new) i.new = i.new_string || i.replace || i.to || "";
-  return i;
+  if (!i.path) {
+    const v = pickAlias(i, ["file", "filename", "filepath"]);
+    if (v !== undefined) i.path = v;
+  }
+  if (!i.content && i.content !== "") {
+    const v = pickAlias(i, ["contents", "body", "text"]);
+    if (v !== undefined) i.content = v;
+  }
+  if (!i.command) {
+    const v = pickAlias(i, ["cmd", "shell", "code"]);
+    if (v !== undefined) i.command = v;
+  }
+  if (!i.pattern) {
+    const v = pickAlias(i, ["query", "q", "keyword", "regex"]);
+    if (v !== undefined) i.pattern = v;
+  }
+  if (!i.old) {
+    const v = pickAlias(i, ["old_string", "from"]);
+    if (v !== undefined) i.old = v;
+  }
+  if (!i.new) {
+    const v = pickAlias(i, ["new_string", "replace", "to"]);
+    if (v !== undefined) i.new = v;
+  }
+  return compactInput(i);
 }
 
 function parseToolCalls(text) {
@@ -1040,7 +1104,7 @@ async function runAgentInner(context, task, model, origin) {
 
   // 突破点：审查框架注入。任务含「审查/找问题/修复」→ 强制资深工程师审查流程，
   // 不再停留在 py_compile / docker config 这类浅层检查。
-  let reviewMode = /review|审查|找问题|找bug|修复.*bug|fix.*bug|检查.*代码|code\s+review/i.test(String(task));
+  let reviewMode = /review|审查|找问题|有什么问题|修一下|修复|找bug|fix|检查.*代码|code\s+review/i.test(String(task));
   if (reviewMode) {
     task =
       "DEEP CODE REVIEW, like a senior engineer:\n" +
@@ -1078,6 +1142,8 @@ async function runAgentInner(context, task, model, origin) {
     task +
     "\n</task>";
   let finalText = "";
+  let wroteThisTask = false;
+  let verifiedThisTask = false;
 
   for (let round = 1; round <= maxRounds; round++) {
     if (stopRequested) {
@@ -1106,7 +1172,10 @@ async function runAgentInner(context, task, model, origin) {
         (round === 1 ? agentPersona(personaIdx) : agentPersonaShort(personaIdx)) +
           "\n\n" +
           roundBase +
-          "\n\nOutput a <tool> block now. If you have enough info, STOP investigating and write the code NOW.",
+          "\n\n" +
+          (wroteThisTask && !verifiedThisTask
+            ? "You already wrote files. Do NOT output <done>. Output run_command or start_process NOW to verify the change actually works."
+            : "Output a <tool> block now. Investigate with several tools in parallel, then write, then verify. Do not stop after a single edit."),
         model,
         origin,
         (d) => {
@@ -1193,7 +1262,7 @@ async function runAgentInner(context, task, model, origin) {
     );
     for (const { c, res, empty } of executed) {
       if (empty) emptyCalls++;
-      const brief = JSON.stringify(c.input).slice(0, 160);
+      const brief = JSON.stringify(compactInput(c.input)).slice(0, 160);
       const kind =
         c.name === "write_file" || c.name === "replace_in_file" || c.name === "delete_file" || c.name === "rename_file" || c.name === "semantic_rename"
           ? "write"
@@ -1214,6 +1283,8 @@ async function runAgentInner(context, task, model, origin) {
       });
       if (res.ok) anyOk = true;
       else anyFail = true;
+      if (kind === "write" && res.ok) wroteThisTask = true;
+      if (kind === "run" && res.ok) verifiedThisTask = true;
       // 回喂压缩：每条结果最多 2000 字符（token 优化，原 4000）
       results += `<tool-result>${c.name}(${JSON.stringify(c.input)}) => ${res.text.slice(0, 2000)}</tool-result>\n`;
     }
@@ -1229,6 +1300,12 @@ async function runAgentInner(context, task, model, origin) {
     if (anyFail || emptyCalls > 0) {
       base += "\nA tool call failed or had empty arguments. Do NOT output <done>. Retry with the required fields (search_content needs {\"pattern\":\"...\"}, run_command needs {\"command\":\"...\"}, read_file needs {\"path\":\"...\"}).";
       done = "";
+    }
+    if (done && wroteThisTask && !verifiedThisTask) {
+      done = "";
+      base +=
+        "\nYou tried to finish after writing files but never ran a command to verify. Do NOT output <done>. Call run_command (or start_process) now.";
+      post({ type: "status", text: "写过文件但未验证，继续跑命令检查" });
     }
     // 进展判定：有成功工具调用 = 有进展；否则累计卡死轮数
     if (anyOk) {
