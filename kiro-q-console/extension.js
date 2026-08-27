@@ -90,6 +90,7 @@ Rules:
 - if verification fails, keep iterating: read the error, fix again, re-run. A one-line config tweak is not enough if the original error remains.
 - if a file path fails, use find_files or list_dir to discover the real path instead of guessing
 - if a shell command is not found (e.g. python), retry with python3 / the correct binary in the next turn
+- BE TERSY: no prose, no explanations between tool blocks. Output <tool> blocks directly.
 - finish by outputting <done>one-line summary</done> only after tools ran AND (if you wrote files) verification succeeded`;
 
 function agentPersona(i) {
@@ -1321,8 +1322,9 @@ async function runAgentInner(context, task, model, origin) {
       else anyFail = true;
       if (kind === "write" && res.ok) wroteThisTask = true;
       if (kind === "run" && res.ok) verifiedThisTask = true;
-      // 回喂压缩：每条结果最多 2000 字符（token 优化，原 4000）
-      results += `<tool-result>${c.name}(${JSON.stringify(c.input)}) => ${res.text.slice(0, 2000)}</tool-result>\n`;
+      // 回喂压缩：读类结果 800 字符、运行类 1200、其余 500（token 加速，模型只需知道结论）
+      const fbCap = kind === "read" ? 800 : kind === "run" ? 1200 : 500;
+      results += `<tool-result>${c.name}(${JSON.stringify(c.input)}) => ${res.text.slice(0, fbCap)}</tool-result>\n`;
     }
     if (calls.length > capCalls) {
       results += `<tool-result>note: ${calls.length - capCalls} more tool calls were ignored this turn; call them one by one next turn.</tool-result>\n`;

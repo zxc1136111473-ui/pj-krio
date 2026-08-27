@@ -275,8 +275,21 @@
         const d = addMsg(
           m.ok ? "system" : "error",
           `${icon} ${label} · ${m.name}${m.ok ? " ✓" : " ✗"}`,
-          m.brief + "\n" + m.result
+          m.brief
         );
+        // 结果折叠：只显示标题行，点击展开（读大文件不刷屏、渲染快）
+        if (m.result && String(m.result).trim()) {
+          const det = document.createElement("details");
+          det.className = "toolDetail";
+          const sum = document.createElement("summary");
+          sum.textContent = "结果 (" + String(m.result).length + " 字符)";
+          const pre = document.createElement("pre");
+          pre.className = "toolOut";
+          pre.textContent = String(m.result).slice(0, 2000);
+          det.appendChild(sum);
+          det.appendChild(pre);
+          d.appendChild(det);
+        }
         // 写工具加撤销按钮
         if (m.kind === "write" && m.ok) {
           let path = "";

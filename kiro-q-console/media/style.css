@@ -110,3 +110,14 @@ pre.codeblock .copybtn {
   font-size: 11px; padding: 1px 8px;
 }
 .msg .act { margin-left: 6px; }
+details.toolDetail { margin-top: 4px; }
+details.toolDetail summary {
+  cursor: pointer; color: var(--dim); font-size: 11px;
+  list-style: none; user-select: none;
+}
+details.toolDetail summary:hover { color: var(--fg); }
+pre.toolOut {
+  margin: 4px 0 0; padding: 6px 8px; max-height: 260px; overflow: auto;
+  background: #1b1b1b; border: 1px solid var(--border); border-radius: 4px;
+  font: 11px/1.4 Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+}
