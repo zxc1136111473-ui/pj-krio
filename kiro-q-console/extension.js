@@ -63,8 +63,10 @@ Available tools:
 - replace_in_file: input {"path": "relative/path.py", "old": "exact substring", "new": "replacement"} — replace substring in a file
 - read_file: input {"path": "relative/path.py"} — return file content
 - list_dir: input {"path": "relative/dir"} — list directory entries
+- find_files: input {"pattern": "**/*.py"} — find files by glob pattern, returns matching relative paths
 - search_content: input {"pattern": "regex", "path": "relative/dir or empty string for whole workspace"} — search file contents
 - run_command: input {"command": "shell command"} — run in the workspace shell
+- read_lints: input {"path": "relative/file.py or empty for all"} — read editor diagnostics (errors/warnings)
 - subagent: input {"task": "subtask description"} — spawn an independent worker to research a subtask in parallel (it can read files, search, list dirs and run commands, but cannot write). Returns its one-line summary.
 
 Rules:
@@ -74,6 +76,7 @@ Rules:
 - for dependent calls (e.g. read a file right after writing it) wait for the next turn
 - use subagent to parallelize research of separate files/areas
 - WHEN FIXING CODE: if you already know the fix from the task description, output read_file AND replace_in_file/write_file in the SAME first turn. Do not spend turns only reading.
+- if a file path fails, use find_files or list_dir to discover the real path instead of guessing
 - if a shell command is not found (e.g. python), retry with python3 / the correct binary in the next turn
 - finish by outputting <done>one-line summary</done> when the task is complete`;
 
@@ -82,10 +85,13 @@ function agentPersona(i) {
   return AGENT_IDENTITIES[n] + "\n\n" + AGENT_PROTOCOL;
 }
 
-// 极简协议：第 2 轮起用，省 ~600 token/轮（完整协议已在第 1 轮说过）
+// 极简协议：第 2 轮起用。保留工具清单 + 格式示例（模型才能继续正确调用），砍掉长规则
 function agentPersonaShort(i) {
   const n = Math.max(0, Math.min(i, AGENT_IDENTITIES.length - 1));
-  return AGENT_IDENTITIES[n] + "\n\nContinue with <tool> blocks or <done>summary</done>. Paths relative, no \"..\". Failed calls: retry with full args.";
+  return (
+    AGENT_IDENTITIES[n] +
+    '\n\nKeep calling tools with EXACTLY one block per tool, nothing else:\n\n<tool>{"name": "<tool_name>", "input": {<json args>}}</tool>\n\nTools: write_file{path,content} replace_in_file{path,old,new} read_file{path} list_dir{path} find_files{pattern} search_content{pattern,path} run_command{command} read_lints{path} subagent{task}\n\nPaths relative to workspace root, no "..". Finish with <done>summary</done>.'
+  );
 }
 
 let view = undefined; // WebviewView（底部面板）
@@ -581,6 +587,40 @@ async function execTool(name, input, ctx) {
           .join("\n");
         const extra = entries.length > 250 ? `\n… +${entries.length - 250} more` : "";
         return { ok: true, text: (lines || "(空目录)") + extra };
+      }
+      case "find_files": {
+        const root = wsRoot();
+        if (!root) return { ok: false, text: "没有打开的工作区" };
+        const pattern = String(input.pattern || "**/*").replace(/\\/g, "/");
+        const files = await vscode.workspace.findFiles(
+          pattern,
+          "**/{node_modules,.git,dist,out,build,.venv,__pycache__,vendor}/**",
+          100
+        );
+        if (!files.length) return { ok: true, text: "(无匹配)" };
+        const rootPath = root.fsPath;
+        return {
+          ok: true,
+          text: files
+            .map((f) => (f.fsPath.startsWith(rootPath) ? f.fsPath.slice(rootPath.length + 1) : f.fsPath))
+            .slice(0, 100)
+            .join("\n"),
+        };
+      }
+      case "read_lints": {
+        const docs = input.path
+          ? [vscode.workspace.textDocuments.find((d) => d.uri.fsPath.endsWith(String(input.path)))]
+          : vscode.workspace.textDocuments;
+        const hits = [];
+        for (const doc of docs) {
+          if (!doc) continue;
+          const diags = vscode.languages.getDiagnostics(doc.uri);
+          for (const dg of diags.slice(0, 30)) {
+            const sev = dg.severity === 0 ? "ERR" : dg.severity === 1 ? "WARN" : "INFO";
+            hits.push(`${doc.uri.fsPath.split("/").pop()}:${dg.range.start.line + 1}:${sev}: ${dg.message.slice(0, 160)}`);
+          }
+        }
+        return { ok: true, text: (hits.join("\n") || "(无诊断)").slice(0, 4000) };
       }
       case "search_content": {
         const pattern = String(input.pattern || input.query || input.q || input.keyword || input.regex || "");
