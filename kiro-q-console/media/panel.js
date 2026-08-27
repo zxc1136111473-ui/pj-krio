@@ -164,8 +164,8 @@
       if (msg.role === "user") addMsg("user", "你", msg.text);
       else if (msg.role === "assistant") addMsg("assistant", "Q", msg.text);
       else if (msg.role === "tool") {
-        const icons = { read: "📖", write: "✏️", run: "▶", agent: "🤖" };
-        const labels = { read: "读", write: "写", run: "运行", agent: "子代理" };
+        const icons = { read: "📖", write: "✏️", run: "▶", agent: "🤖", fetch: "🌐" };
+        const labels = { read: "读", write: "写", run: "运行", agent: "子代理", fetch: "联网" };
         const icon = icons[msg.kind] || "🔧";
         addMsg("system", `${icon} ${labels[msg.kind] || "工具"}`, msg.text.replace(/^[✓✗] \[[a-z]+\] /, ""));
       } else if (msg.role === "error") addMsg("error", "错误", msg.text);
@@ -250,8 +250,8 @@
         addMsg("assistant", "Q", m.text);
         break;
       case "tool": {
-        const icons = { read: "📖", write: "✏️", run: "▶", agent: "🤖" };
-        const labels = { read: "读", write: "写", run: "运行", agent: "子代理" };
+        const icons = { read: "📖", write: "✏️", run: "▶", agent: "🤖", fetch: "🌐" };
+        const labels = { read: "读", write: "写", run: "运行", agent: "子代理", fetch: "联网" };
         const icon = icons[m.kind] || "🔧";
         const label = labels[m.kind] || "工具";
         const d = addMsg(

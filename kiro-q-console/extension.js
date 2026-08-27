@@ -60,15 +60,19 @@ To call a tool, output EXACTLY one block and nothing else:
 You may output several <tool> blocks in one turn if the calls are independent.
 
 Available tools:
-- write_file: input {"path": "relative/path.py", "content": "file text"} — create/overwrite a file in the workspace
-- replace_in_file: input {"path": "relative/path.py", "old": "exact substring", "new": "replacement"} — replace substring in a file
-- read_file: input {"path": "relative/path.py"} — return file content
+- write_file: input {"path": "relative/path.py", "content": "file text"} — create/overwrite a file
+- replace_in_file: input {"path": "relative/path.py", "old": "exact substring", "new": "replacement"}
+- delete_file: input {"path": "relative/path.py"} — delete a file (undoable)
+- rename_file: input {"path": "old/rel.py", "new_path": "new/rel.py"} — rename/move a file
+- read_file: input {"path": "relative/path.py", "offset": 0, "limit": 200} — read file; offset/limit are optional line numbers
 - list_dir: input {"path": "relative/dir"} — list directory entries
-- find_files: input {"pattern": "**/*.py"} — find files by glob pattern, returns matching relative paths
-- search_content: input {"pattern": "regex", "path": "relative/dir or empty string for whole workspace"} — search file contents
-- run_command: input {"command": "shell command"} — run in the workspace shell
-- read_lints: input {"path": "relative/file.py or empty for all"} — read editor diagnostics (errors/warnings)
-- subagent: input {"task": "subtask description"} — spawn an independent worker to research a subtask in parallel (it can read files, search, list dirs and run commands, but cannot write). Returns its one-line summary.
+- find_files: input {"pattern": "**/*.py"} — glob file search
+- search_content: input {"pattern": "regex", "path": "relative/dir or empty"} — grep file contents
+- run_command: input {"command": "shell command"} — run in workspace shell
+- read_lints: input {"path": "relative/file.py or empty"} — editor diagnostics
+- web_search: input {"query": "search terms"} — web search, returns titles+urls+snippets
+- web_fetch: input {"url": "https://..."} — fetch a URL as text
+- subagent: input {"task": "subtask"} — parallel research worker (read/search/run only)
 
 Rules:
 - paths are relative to the workspace root; never use absolute paths; never use ".."
@@ -91,7 +95,7 @@ function agentPersonaShort(i) {
   const n = Math.max(0, Math.min(i, AGENT_IDENTITIES.length - 1));
   return (
     AGENT_IDENTITIES[n] +
-    '\n\nKeep calling tools with EXACTLY one block per tool, nothing else:\n\n<tool>{"name": "<tool_name>", "input": {<json args>}}</tool>\n\nTools: write_file{path,content} replace_in_file{path,old,new} read_file{path} list_dir{path} find_files{pattern} search_content{pattern,path} run_command{command} read_lints{path} subagent{task}\n\nPaths relative to workspace root, no "..". Finish with <done>summary</done>.'
+    '\n\nKeep calling tools with EXACTLY one block per tool, nothing else:\n\n<tool>{"name": "<tool_name>", "input": {<json args>}}</tool>\n\nTools: write_file{path,content} replace_in_file{path,old,new} delete_file{path} rename_file{path,new_path} read_file{path,offset,limit} list_dir{path} find_files{pattern} search_content{pattern,path} run_command{command} read_lints{path} web_search{query} web_fetch{url} subagent{task}\n\nPaths relative to workspace root, no "..". Finish with <done>summary</done>.'
   );
 }
 
@@ -547,21 +551,48 @@ async function execTool(name, input, ctx) {
         if (!uri) return { ok: false, text: "非法路径" };
         const data = await vscode.workspace.fs.readFile(uri);
         let text = new TextDecoder("utf-8").decode(data);
+        const lines = text.split(/\r?\n/);
+        const offset = Math.max(0, Number(input.offset) || 0);
+        const limit = Number(input.limit) > 0 ? Number(input.limit) : 0;
+        if (offset || limit) {
+          const slice = lines.slice(offset, limit ? offset + limit : undefined);
+          const numbered = slice.map((l, i) => `${offset + i + 1}|${l}`).join("\n");
+          return { ok: true, text: numbered.slice(0, MAX_READ) + (offset + slice.length < lines.length ? "\n…(more lines)" : "") };
+        }
         const cut = text.length > MAX_READ;
         if (cut) text = text.slice(0, MAX_READ);
-        // 跨轮去重：同一文件已读过就给摘要提示，别再整段重读（防「只读不写」空转）
         const key = "read:" + input.path;
-        if (readCache.has(key)) {
+        if (readCache.has(key) && !offset && !limit) {
           return {
             ok: true,
             text:
               `(already read ${input.path}; do NOT read it again. ` +
-              `Previous content is summarized above in the conversation. If you need to fix it, use replace_in_file or write_file.)\n` +
+              `Use offset/limit to read a slice, or replace_in_file/write_file to change it.)\n` +
               text.slice(0, 600),
           };
         }
         readCache.set(key, text.slice(0, 3000));
         return { ok: true, text: text + (cut ? "\n…(truncated)" : "") };
+      }
+      case "delete_file": {
+        const uri = resolveRel(input.path);
+        if (!uri) return { ok: false, text: "非法路径" };
+        let old = null;
+        try {
+          old = new TextDecoder("utf-8").decode(await vscode.workspace.fs.readFile(uri));
+        } catch (e) {
+          return { ok: false, text: "文件不存在: " + input.path };
+        }
+        undoStore.set(String(input.path), old);
+        await vscode.workspace.fs.delete(uri);
+        return { ok: true, text: `已删除 ${input.path}` };
+      }
+      case "rename_file": {
+        const src = resolveRel(input.path);
+        const dst = resolveRel(input.new_path || input.to || input.dest);
+        if (!src || !dst) return { ok: false, text: "非法路径，需要 path + new_path" };
+        await vscode.workspace.fs.rename(src, dst, { overwrite: false });
+        return { ok: true, text: `已重命名 ${input.path} → ${input.new_path || input.to || input.dest}` };
       }
       case "replace_in_file": {
         const uri = resolveRel(input.path);
@@ -657,6 +688,51 @@ async function execTool(name, input, ctx) {
         const cap = Number(get("toolOutputChars", 30000)) || 30000;
         return { ok: true, text: (hits.join("\n") || "(无匹配)").slice(0, cap) };
       }
+      case "web_search": {
+        const query = String(input.query || input.q || "").trim();
+        if (!query) return { ok: false, text: "缺 query" };
+        try {
+          const url =
+            "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query);
+          const res = await fetch(url, {
+            headers: { "User-Agent": "Mozilla/5.0 KiroQConsole" },
+          });
+          const html = await res.text();
+          const hits = [];
+          const re = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+          let m;
+          while ((m = re.exec(html)) && hits.length < 8) {
+            const href = m[1].replace(/&amp;/g, "&");
+            const title = m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+            if (title) hits.push(`${title}\n${href}`);
+          }
+          return { ok: true, text: hits.join("\n\n") || "(无结果)" };
+        } catch (e) {
+          return { ok: false, text: "web_search 失败: " + e.message };
+        }
+      }
+      case "web_fetch": {
+        const url = String(input.url || "").trim();
+        if (!/^https?:\/\//i.test(url)) return { ok: false, text: "url 必须是 http(s)" };
+        try {
+          const res = await fetch(url, {
+            headers: { "User-Agent": "Mozilla/5.0 KiroQConsole" },
+          });
+          const ct = String(res.headers.get("content-type") || "");
+          let text = await res.text();
+          if (ct.includes("html")) {
+            text = text
+              .replace(/<script[\s\S]*?<\/script>/gi, " ")
+              .replace(/<style[\s\S]*?<\/style>/gi, " ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+          }
+          return { ok: true, text: text.slice(0, 8000) };
+        } catch (e) {
+          return { ok: false, text: "web_fetch 失败: " + e.message };
+        }
+      }
       case "run_command": {
         if (!childProcess) return { ok: false, text: "run_command 仅桌面端可用" };
         const cmd = String(input.command ?? "").trim();
@@ -704,7 +780,7 @@ async function execTool(name, input, ctx) {
             break;
           }
           for (const c of subCalls) {
-            if (c.name === "write_file" || c.name === "replace_in_file" || c.name === "subagent") {
+            if (c.name === "write_file" || c.name === "replace_in_file" || c.name === "delete_file" || c.name === "rename_file" || c.name === "subagent") {
               subBase += `<tool-result>${c.name} not allowed in subagent</tool-result>\n`;
               continue;
             }
@@ -943,7 +1019,7 @@ async function runAgentInner(context, task, model, origin) {
     let anyFail = false;
     let anyOk = false;
     let emptyCalls = 0;
-    const capCalls = Math.min(calls.length, 10); // 每轮最多执行 10 个调用，防空转刷屏
+    const capCalls = Math.min(calls.length, 16); // 每轮最多 16 个并行调用，贴近原生 IDE 多工具联动
     // 去重：同一轮重复调用同一工具+同一参数只执行一次（模型常重复 read_file 同一文件）
     const seenKeys = new Set();
     const unique = [];
@@ -963,7 +1039,11 @@ async function runAgentInner(context, task, model, origin) {
           (c.name === "read_file" && !String(c.input.path || "").trim()) ||
           (c.name === "write_file" && !String(c.input.path || "").trim()) ||
           (c.name === "replace_in_file" && !String(c.input.path || "").trim()) ||
-          (c.name === "search_content" && !String(c.input.pattern || c.input.query || "").trim());
+          (c.name === "search_content" && !String(c.input.pattern || c.input.query || "").trim()) ||
+          (c.name === "web_search" && !String(c.input.query || c.input.q || "").trim()) ||
+          (c.name === "web_fetch" && !String(c.input.url || "").trim()) ||
+          (c.name === "delete_file" && !String(c.input.path || "").trim()) ||
+          (c.name === "rename_file" && !String(c.input.path || "").trim());
         if (empty) {
           return {
             c,
@@ -982,10 +1062,12 @@ async function runAgentInner(context, task, model, origin) {
       if (empty) emptyCalls++;
       const brief = JSON.stringify(c.input).slice(0, 160);
       const kind =
-        c.name === "write_file" || c.name === "replace_in_file"
+        c.name === "write_file" || c.name === "replace_in_file" || c.name === "delete_file" || c.name === "rename_file"
           ? "write"
           : c.name === "run_command"
             ? "run"
+            : c.name === "web_search" || c.name === "web_fetch"
+              ? "fetch"
             : c.name === "subagent"
               ? "agent"
               : "read";
