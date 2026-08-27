@@ -923,6 +923,21 @@ async function runAgentInner(context, task, model, origin) {
     }
   }
 
+  // 突破点：审查框架注入。任务含「审查/找问题/修复」→ 强制资深工程师审查流程，
+  // 不再停留在 py_compile / docker config 这类浅层检查。
+  let reviewMode = /review|审查|找问题|找bug|修复.*bug|fix.*bug|检查.*代码|code\s+review/i.test(String(task));
+  if (reviewMode) {
+    task =
+      "DEEP CODE REVIEW, like a senior engineer:\n" +
+      "1. FIRST read the core source files (backend/app/main.py, backend/app/core/*, backend/app/services/* — not just scripts/config)\n" +
+      "2. Find REAL bugs: logic errors, exception gaps, resource leaks, race conditions, SQL injection, missing validation\n" +
+      "3. For EACH bug output a numbered list with file:line and severity\n" +
+      "4. THEN fix each bug with replace_in_file/write_file and verify with run_command\n" +
+      "Do NOT stop at syntax checks (py_compile is NOT a review). Read the actual code.\n\n" +
+      "User request: " +
+      task;
+  }
+
   // 先注入真实顶层目录，避免模型按字母序截断后去猜 src/main.py
   let snap = "";
   try {
