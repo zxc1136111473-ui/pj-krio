@@ -68,7 +68,12 @@ Available tools:
 - list_dir: input {"path": "relative/dir"} — list directory entries
 - find_files: input {"pattern": "**/*.py"} — glob file search
 - search_content: input {"pattern": "regex", "path": "relative/dir or empty"} — grep file contents
-- run_command: input {"command": "shell command"} — run in workspace shell
+- run_command: input {"command": "shell command"} — run in workspace shell (waits)
+- start_process: input {"command": "long-running command"} — start background process, returns pid
+- list_processes: input {} — list background processes
+- get_process_output: input {"pid": 123} — read stdout/stderr of a background process
+- kill_process: input {"pid": 123} — stop a background process
+- semantic_rename: input {"path": "file.py", "old_name": "foo", "new_name": "bar"} — language-service rename across workspace
 - read_lints: input {"path": "relative/file.py or empty"} — editor diagnostics
 - web_search: input {"query": "search terms"} — web search, returns titles+urls+snippets
 - web_fetch: input {"url": "https://..."} — fetch a URL as text
@@ -95,7 +100,7 @@ function agentPersonaShort(i) {
   const n = Math.max(0, Math.min(i, AGENT_IDENTITIES.length - 1));
   return (
     AGENT_IDENTITIES[n] +
-    '\n\nKeep calling tools with EXACTLY one block per tool, nothing else:\n\n<tool>{"name": "<tool_name>", "input": {<json args>}}</tool>\n\nTools: write_file{path,content} replace_in_file{path,old,new} delete_file{path} rename_file{path,new_path} read_file{path,offset,limit} list_dir{path} find_files{pattern} search_content{pattern,path} run_command{command} read_lints{path} web_search{query} web_fetch{url} subagent{task}\n\nPaths relative to workspace root, no "..". Finish with <done>summary</done>.'
+    '\n\nKeep calling tools with EXACTLY one block per tool, nothing else:\n\n<tool>{"name": "<tool_name>", "input": {<json args>}}</tool>\n\nTools: write_file{path,content} replace_in_file{path,old,new} delete_file{path} rename_file{path,new_path} semantic_rename{path,old_name,new_name} read_file{path,offset,limit} list_dir{path} find_files{pattern} search_content{pattern,path} run_command{command} start_process{command} list_processes{} get_process_output{pid} kill_process{pid} read_lints{path} web_search{query} web_fetch{url} subagent{task}\n\nPaths relative to workspace root, no "..". Finish with <done>summary</done>.'
   );
 }
 
@@ -105,6 +110,7 @@ let currentAbort = undefined;
 let busy = false;
 let stopRequested = false; // 停止按钮
 let undoStore = new Map(); // 写入撤销：path -> 旧内容（null=原不存在）
+let bgProcs = new Map(); // pid -> {proc, cmd, out, err, started, cwd, done, code}
 let keepAliveTimer = undefined;
 let statusItem = undefined;
 let currentModel = DEFAULTS.model;
@@ -179,6 +185,27 @@ function extractFromJson(obj, sink) {
       sink.text += item;
     }
   }
+  // 服务端 toolUse（原生 IDE 路径偶发会带）：有就转成客户端 <tool>，没有不影响现有协议
+  harvestToolUse(obj, sink);
+}
+
+function harvestToolUse(obj, sink) {
+  if (!obj || typeof obj !== "object") return;
+  const visit = (n) => {
+    if (!n || typeof n !== "object") return;
+    const name = n.name || n.toolName || n.tool_name;
+    const input = n.input || n.arguments || n.args || n.parameters;
+    const looks =
+      (n.toolUse || n.tool_use || n.toolUseId || n.tool_use_id || n.type === "tool_use" || n.type === "toolUse") &&
+      name;
+    if (looks && typeof name === "string") {
+      const payload = { name, input: input && typeof input === "object" ? input : {} };
+      sink.text += "\n<tool>" + JSON.stringify(payload) + "</tool>\n";
+    }
+    if (Array.isArray(n)) n.forEach(visit);
+    else Object.values(n).forEach(visit);
+  };
+  visit(obj);
 }
 
 // 兜底：非 JSON 流里的 "content":"..." 正则抽取（对齐 python 版行为）
@@ -754,6 +781,105 @@ async function execTool(name, input, ctx) {
           );
         });
       }
+      case "start_process": {
+        if (!childProcess) return { ok: false, text: "start_process 仅桌面端可用" };
+        const cmd = String(input.command ?? "").trim();
+        if (!cmd) return { ok: false, text: "缺 command" };
+        const root = wsRoot();
+        const proc = childProcess.spawn(cmd, {
+          cwd: root ? root.fsPath : undefined,
+          shell: true,
+          env: process.env,
+        });
+        const rec = {
+          proc,
+          cmd,
+          out: "",
+          err: "",
+          started: Date.now(),
+          cwd: root ? root.fsPath : "",
+          done: false,
+          code: null,
+        };
+        const cap = 200000;
+        proc.stdout &&
+          proc.stdout.on("data", (b) => {
+            rec.out += b.toString();
+            if (rec.out.length > cap) rec.out = rec.out.slice(-cap);
+          });
+        proc.stderr &&
+          proc.stderr.on("data", (b) => {
+            rec.err += b.toString();
+            if (rec.err.length > cap) rec.err = rec.err.slice(-cap);
+          });
+        proc.on("close", (code) => {
+          rec.done = true;
+          rec.code = code;
+        });
+        proc.on("error", (e) => {
+          rec.done = true;
+          rec.err += String(e && e.message ? e.message : e);
+        });
+        const pid = proc.pid;
+        if (!pid) return { ok: false, text: "未能启动进程" };
+        bgProcs.set(pid, rec);
+        return { ok: true, text: `started pid=${pid} cmd=${cmd}` };
+      }
+      case "list_processes": {
+        if (!bgProcs.size) return { ok: true, text: "(无后台进程)" };
+        const lines = [];
+        for (const [pid, rec] of bgProcs) {
+          lines.push(
+            `pid=${pid} ${rec.done ? "exited:" + rec.code : "running"} ${Math.round((Date.now() - rec.started) / 1000)}s ${rec.cmd}`
+          );
+        }
+        return { ok: true, text: lines.join("\n") };
+      }
+      case "get_process_output": {
+        const pid = Number(input.pid || input.id);
+        const rec = bgProcs.get(pid);
+        if (!rec) return { ok: false, text: "未知 pid " + pid };
+        const cap = Number(get("toolOutputChars", 30000)) || 30000;
+        const body = (rec.out + (rec.err ? "\n[stderr]\n" + rec.err : "")).slice(-cap);
+        return {
+          ok: true,
+          text: `pid=${pid} ${rec.done ? "exited:" + rec.code : "running"}\n` + (body || "(暂无输出)"),
+        };
+      }
+      case "kill_process": {
+        const pid = Number(input.pid || input.id);
+        const rec = bgProcs.get(pid);
+        if (!rec) return { ok: false, text: "未知 pid " + pid };
+        try {
+          rec.proc.kill("SIGTERM");
+        } catch (e) {
+          return { ok: false, text: "kill 失败: " + e.message };
+        }
+        return { ok: true, text: `已发送 SIGTERM 给 pid=${pid}` };
+      }
+      case "semantic_rename": {
+        const uri = resolveRel(input.path);
+        if (!uri) return { ok: false, text: "非法路径" };
+        const oldName = String(input.old_name || input.old || input.from || "").trim();
+        const newName = String(input.new_name || input.new || input.to || "").trim();
+        if (!oldName || !newName) return { ok: false, text: "需要 old_name + new_name" };
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const text = doc.getText();
+        let pos = null;
+        const re = new RegExp("\\b" + oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b");
+        const m = re.exec(text);
+        if (m) pos = doc.positionAt(m.index);
+        else pos = new vscode.Position(0, 0);
+        const edits = await vscode.commands.executeCommand("vscode.executeDocumentRenameProvider", uri, pos, newName);
+        if (!edits || !edits.size) {
+          return {
+            ok: false,
+            text: "语言服务未提供跨文件重命名（可能未开语言扩展）。可改用 rename_file 或 replace_in_file。",
+          };
+        }
+        const applied = await vscode.workspace.applyEdit(edits);
+        return { ok: applied, text: applied ? `语义重命名 ${oldName} → ${newName}` : "applyEdit 失败" };
+      }
       case "subagent": {
         // 子代理：独立调研子任务（只读 + 跑命令），最多 3 轮，返回一行总结
         const subTask = String(input.task || input.prompt || "");
@@ -780,7 +906,7 @@ async function execTool(name, input, ctx) {
             break;
           }
           for (const c of subCalls) {
-            if (c.name === "write_file" || c.name === "replace_in_file" || c.name === "delete_file" || c.name === "rename_file" || c.name === "subagent") {
+            if (c.name === "write_file" || c.name === "replace_in_file" || c.name === "delete_file" || c.name === "rename_file" || c.name === "semantic_rename" || c.name === "subagent") {
               subBase += `<tool-result>${c.name} not allowed in subagent</tool-result>\n`;
               continue;
             }
@@ -1058,7 +1184,10 @@ async function runAgentInner(context, task, model, origin) {
           (c.name === "web_search" && !String(c.input.query || c.input.q || "").trim()) ||
           (c.name === "web_fetch" && !String(c.input.url || "").trim()) ||
           (c.name === "delete_file" && !String(c.input.path || "").trim()) ||
-          (c.name === "rename_file" && !String(c.input.path || "").trim());
+          (c.name === "rename_file" && !String(c.input.path || "").trim()) ||
+          (c.name === "start_process" && !String(c.input.command || "").trim()) ||
+          ((c.name === "kill_process" || c.name === "get_process_output") && !String(c.input.pid || c.input.id || "").trim()) ||
+          (c.name === "semantic_rename" && (!String(c.input.path || "").trim() || !String(c.input.old_name || c.input.old || "").trim()));
         if (empty) {
           return {
             c,
@@ -1077,9 +1206,9 @@ async function runAgentInner(context, task, model, origin) {
       if (empty) emptyCalls++;
       const brief = JSON.stringify(c.input).slice(0, 160);
       const kind =
-        c.name === "write_file" || c.name === "replace_in_file" || c.name === "delete_file" || c.name === "rename_file"
+        c.name === "write_file" || c.name === "replace_in_file" || c.name === "delete_file" || c.name === "rename_file" || c.name === "semantic_rename"
           ? "write"
-          : c.name === "run_command"
+          : c.name === "run_command" || c.name === "start_process" || c.name === "kill_process" || c.name === "list_processes" || c.name === "get_process_output"
             ? "run"
             : c.name === "web_search" || c.name === "web_fetch"
               ? "fetch"
@@ -1701,6 +1830,12 @@ function deactivate() {
     } catch (_) {}
   }
   if (keepAliveTimer) clearInterval(keepAliveTimer);
+  for (const rec of bgProcs.values()) {
+    try {
+      rec.proc.kill("SIGTERM");
+    } catch (_) {}
+  }
+  bgProcs.clear();
   // 退出前强制落盘会话
   if (extContext) {
     try {
