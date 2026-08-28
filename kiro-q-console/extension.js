@@ -64,7 +64,7 @@ Available tools:
 - replace_in_file: input {"path": "relative/path.py", "old": "exact substring", "new": "replacement"}
 - delete_file: input {"path": "relative/path.py"} — delete a file (undoable)
 - rename_file: input {"path": "old/rel.py", "new_path": "new/rel.py"} — rename/move a file
-- read_file: input {"path": "relative/path.py", "offset": 0, "limit": 200} — read file; offset/limit are optional line numbers
+- read_file: input {"path": "relative/path.py", "offset": 0, "limit": 200} — read file; offset/limit are optional line numbers. Old context is archived in <memory_file> (e.g. .qconsole-memory/*.md); read it when you need earlier decisions.
 - list_dir: input {"path": "relative/dir"} — list directory entries
 - find_files: input {"pattern": "**/*.py"} — glob file search
 - search_content: input {"pattern": "regex", "path": "relative/dir or empty"} — grep file contents
@@ -1184,8 +1184,30 @@ async function runAgentInner(context, task, model, origin) {
     snap += "<platform>\nWindows: use PowerShell-compatible commands or python3; no bash builtins.\n</platform>\n";
   }
 
+  // 1M 上下文突破：会话记忆文件（磁盘无界）+ 每轮只带最近结果。
+  // 模型需要旧信息时用 read_file 查 memory 文件，等效无界上下文。
+  let memoryRel = "";
+  try {
+    const root = wsRoot();
+    if (root) {
+      const memDir = vscode.Uri.joinPath(root, ".qconsole-memory");
+      await vscode.workspace.fs.createDirectory(memDir);
+      memoryRel = ".qconsole-memory/" + (currentSessionId || "s").slice(0, 8) + ".md";
+      const memUri = vscode.Uri.joinPath(root, memoryRel);
+      try {
+        await vscode.workspace.fs.stat(memUri);
+      } catch (_) {
+        await vscode.workspace.fs.writeFile(
+          memUri,
+          Buffer.from("# Q Console Session Memory\n\n(Old context is archived here. Read this file with read_file to recall past decisions when needed.)\n\n", "utf-8")
+        );
+      }
+    }
+  } catch (_) {}
+
   let base =
     snap +
+    (memoryRel ? `<memory_file>${memoryRel} — full past context of this session is archived here; read it (optionally with offset/limit) to recall earlier work instead of re-doing it.</memory_file>\n` : "") +
     (curSession().priorContext ? "<prior_context>\n" + curSession().priorContext + "\n</prior_context>\n" : "") +
     "<task>\nExecute this local coding task with tools. Use the workspace_root listing; do not invent missing files.\n" +
     task +
@@ -1351,7 +1373,23 @@ async function runAgentInner(context, task, model, origin) {
     // 只保留最近 4 条工具结果，旧结果折叠成一行摘要（token 优化，原 6）
     const parts = base.split("\n\n<tool-result>");
     if (parts.length > 5) {
-      base = parts.slice(0, 1).join("") + "\n\n<tool-result>(earlier results omitted: " + (parts.length - 5) + " entries)" + "\n\n<tool-result>" + parts.slice(-4).join("\n\n<tool-result>");
+      const dropped = parts.length - 5;
+      base = parts.slice(0, 1).join("") + "\n\n<tool-result>(earlier results omitted: " + dropped + " entries)" + "\n\n<tool-result>" + parts.slice(-4).join("\n\n<tool-result>");
+      // 1M 上下文：被折叠的旧结果写进 memory 文件，模型要查用 read_file
+      if (memoryRel && dropped > 0) {
+        const archived = parts.slice(1, 1 + dropped).join("\n\n<tool-result>");
+        try {
+          const memUri = vscode.Uri.joinPath(wsRoot(), memoryRel);
+          let old = "";
+          try {
+            old = new TextDecoder("utf-8").decode(await vscode.workspace.fs.readFile(memUri));
+          } catch (_) {}
+          await vscode.workspace.fs.writeFile(
+            memUri,
+            Buffer.from(old + "\n## 轮 " + round + "\n\n" + archived.slice(0, 4000) + "\n", "utf-8")
+          );
+        } catch (_) {}
+      }
     }
     if (anyFail || emptyCalls > 0) {
       base += "\nA tool call failed or had empty arguments. Do NOT output <done>. Retry with the required fields (search_content needs {\"pattern\":\"...\"}, run_command needs {\"command\":\"...\"}, read_file needs {\"path\":\"...\"}).";

@@ -1,0 +1,1 @@
+{"error":"rate_limit_exceeded","scope":"currency","message":"Too many USDT invoice attempts for this product. Please try a different currency or wait.","currency":"USDT","retry_after_seconds":3326}
